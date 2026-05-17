@@ -49,6 +49,7 @@ export function Game() {
 
   return (
     <Canvas 
+      id="game-canvas"
       shadows={!isMobile} 
       camera={{ fov: 75 }}
       dpr={[1, 2]}

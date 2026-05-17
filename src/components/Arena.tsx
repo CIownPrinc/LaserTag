@@ -24,6 +24,9 @@ function mulberry32(a: number) {
 export function Arena() {
   const isMobile = useGameStore(state => state.isMobile);
   
+  const sync = useGameStore(state => state.syncLevel);
+  const signalColor = useGameStore(state => state.signalColor);
+
   const obstacles = useMemo(() => {
     const count = isMobile ? 40 : 100;
     const rngLocal = mulberry32(12345);
@@ -37,11 +40,22 @@ export function Arena() {
       const isHorizontal = rngLocal() > 0.5;
       const width = isHorizontal ? rngLocal() * 20 + 8 : rngLocal() * 3 + 1;
       const depth = isHorizontal ? rngLocal() * 3 + 1 : rngLocal() * 20 + 8;
-      const color = rngLocal() > 0.5 ? "#00ffff" : "#ff00ff";
+      const baseColor = rngLocal() > 0.5 ? signalColor : "#666";
 
-      return { type: 'box', position: [x, height / 2 - 0.5, z], size: [width, height, depth], rotation: [0, 0, 0], color };
+      return { type: 'box', position: [x, height / 2 - 0.5, z], size: [width, height, depth], rotation: [0, 0, 0], color: baseColor };
     }).filter(Boolean);
-  }, [isMobile]);
+  }, [isMobile, signalColor]);
+
+  // Dynamic grid color and pulse
+  const gridRef = useRef<any>(null);
+  useFrame(({ clock }) => {
+    if (gridRef.current) {
+      const flicker = sync < 30 ? (Math.random() > 0.9 ? 0 : 1) : 1;
+      const pulse = Math.sin(clock.elapsedTime * (1 + sync / 20)) * 0.5 + 0.5;
+      gridRef.current.sectionColor = new THREE.Color(signalColor).multiplyScalar(flicker * (0.5 + pulse * 0.5));
+      gridRef.current.cellColor = new THREE.Color(signalColor).multiplyScalar(0.1 * flicker);
+    }
+  });
 
   return (
     <group>
@@ -53,10 +67,11 @@ export function Arena() {
         </mesh>
       </RigidBody>
       <Grid 
+        ref={gridRef}
         position={[0, -0.49, 0]} 
         args={[200, 200]} 
         cellColor="#333" 
-        sectionColor="#00ffff" 
+        sectionColor={signalColor} 
         fadeDistance={80} 
         cellThickness={0.5} 
         sectionThickness={1.5} 
@@ -70,13 +85,23 @@ export function Arena() {
           <meshStandardMaterial color="#000" roughness={1} />
         </mesh>
       </RigidBody>
+      
+      <SceneController />
 
       {/* Atmosphere */}
       {!isMobile && (
-        <>
-          <Stars radius={100} depth={50} count={5000} factor={4} saturation={1} fade speed={1} />
+        <group>
+          <Stars 
+            radius={100} 
+            depth={50} 
+            count={5000} 
+            factor={4} 
+            saturation={sync / 100} 
+            fade 
+            speed={1 + sync / 50} 
+          />
           <AmbientParticles />
-        </>
+        </group>
       )}
 
       {/* Walls */}
@@ -142,17 +167,26 @@ export function Arena() {
 }
 
 function Wall({ name, position, rotation, isMobile }: { name: string, position: [number, number, number], rotation: [number, number, number], isMobile: boolean }) {
+  const signalColor = useGameStore(state => state.signalColor);
+  const sync = useGameStore(state => state.syncLevel);
+  const wallRef = useRef<THREE.Mesh>(null);
+
+  useFrame(({ clock }) => {
+    if (wallRef.current) {
+      const flicker = sync < 30 ? (Math.random() > 0.95 ? 0.2 : 1) : 1;
+      (wallRef.current.material as THREE.MeshBasicMaterial).opacity = (0.6 + Math.sin(clock.elapsedTime * 2) * 0.2) * flicker;
+    }
+  });
+
   return (
     <RigidBody type="fixed" name={name} position={position} rotation={rotation}>
-      {/* Solid Wall */}
       <mesh>
         <boxGeometry args={[200, 20, 1]} />
         <meshStandardMaterial color="#0a0a1a" roughness={0.8} metalness={0.2} />
       </mesh>
-      {/* Glowing Bottom Line */}
-      <mesh position={[0, -9.5, 0.51]}>
+      <mesh position={[0, -9.5, 0.51]} ref={wallRef}>
         <planeGeometry args={[200, 0.5]} />
-        <meshBasicMaterial color="cyan" toneMapped={false} />
+        <meshBasicMaterial color={signalColor} transparent toneMapped={false} />
       </mesh>
     </RigidBody>
   );
@@ -189,27 +223,55 @@ function JumpPad({ position }: { position: [number, number, number] }) {
       type="fixed" 
       sensor 
       position={position}
-      onIntersectionEnter={({ other }) => {
-        if (other.rigidBodyObject?.name === 'player') {
-          other.rigidBody?.applyImpulse({ x: 0, y: 15, z: 0 }, true);
+      onIntersectionEnter={(payload) => {
+        const rb = payload.other.rigidBody;
+        const userData = rb?.userData as any;
+        if (userData?.name === 'player') {
+          rb?.applyImpulse({ x: 0, y: 15, z: 0 }, true);
           soundManager.playJump();
+          useGameStore.setState({ screenShake: 0.2 });
         }
       }}
     >
       <mesh ref={meshRef} rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.05, 0]}>
-        <circleGeometry args={[2, 32]} />
+        <circleGeometry args={[2.5, 32]} />
         <meshBasicMaterial color="#00ffff" toneMapped={false} />
       </mesh>
       <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.01, 0]}>
-        <ringGeometry args={[2.1, 2.5, 32]} />
+        <ringGeometry args={[2.6, 3.2, 32]} />
         <meshBasicMaterial color="#ff00ff" toneMapped={false} />
+      </mesh>
+      {/* Light beam for visibility */}
+      <mesh position={[0, 5, 0]}>
+        <cylinderGeometry args={[2.5, 2.5, 10, 32, 1, true]} />
+        <meshBasicMaterial color="#00ffff" transparent opacity={0.1} side={THREE.DoubleSide} />
       </mesh>
     </RigidBody>
   );
 }
 
+function SceneController() {
+  const sync = useGameStore(state => state.syncLevel);
+  const isMobile = useGameStore(state => state.isMobile);
+  
+  useFrame((state) => {
+    const { fog } = state.scene;
+    if (fog && fog instanceof THREE.FogExp2) {
+      // Clearer fog as sync increases
+      const targetDensity = isMobile ? 0.04 : 0.02 - (sync / 100) * 0.01;
+      fog.density = THREE.MathUtils.lerp(fog.density, targetDensity, 0.05);
+    }
+  });
+
+  return null;
+}
+
 function AmbientParticles() {
-  const count = 1500;
+  const isMobile = useGameStore(state => state.isMobile);
+  const sync = useGameStore(state => state.syncLevel);
+  const signalColor = useGameStore(state => state.signalColor);
+  const count = isMobile ? 500 : 1500;
+
   const pointsRef = useRef<THREE.Points>(null);
   const materialRef = useRef<THREE.ShaderMaterial>(null);
 
@@ -220,19 +282,27 @@ function AmbientParticles() {
       positions[i * 3] = (Math.random() - 0.5) * 200;
       positions[i * 3 + 1] = Math.random() * 40;
       positions[i * 3 + 2] = (Math.random() - 0.5) * 200;
-      sizes[i] = Math.random() * 0.8 + 0.4; // Smaller particles
+      sizes[i] = Math.random() * 0.8 + 0.4;
     }
     return [positions, sizes];
-  }, []);
+  }, [count]);
 
   const uniforms = useMemo(() => ({
     uTime: { value: 0 },
-    uColor: { value: new THREE.Color('#ffffff') } // White color
+    uColor: { value: new THREE.Color(signalColor) },
+    uSync: { value: 0.5 }
   }), []);
+
+  useEffect(() => {
+    if (materialRef.current) {
+      materialRef.current.uniforms.uColor.value.set(signalColor);
+    }
+  }, [signalColor]);
 
   useFrame((state) => {
     if (materialRef.current && materialRef.current.uniforms) {
       materialRef.current.uniforms.uTime.value = state.clock.elapsedTime;
+      materialRef.current.uniforms.uSync.value = THREE.MathUtils.lerp(materialRef.current.uniforms.uSync.value, sync / 100, 0.05);
     }
   });
 
@@ -260,36 +330,31 @@ function AmbientParticles() {
         uniforms={uniforms}
         vertexShader={`
           uniform float uTime;
+          uniform float uSync;
           attribute float aSize;
           varying float vPointOpacity;
           void main() {
             vec3 pos = position;
-            // Slow upward drift and wobble
-            pos.y += uTime * 0.5;
+            float speed = 0.5 + uSync * 2.0;
+            pos.y += uTime * speed;
             pos.x += sin(uTime * 0.2 + pos.y) * 2.0;
             pos.z += cos(uTime * 0.2 + pos.y) * 2.0;
-            
-            // Wrap around Y
             pos.y = mod(pos.y, 40.0);
-            
             vec4 mvPosition = modelViewMatrix * vec4(pos, 1.0);
             gl_Position = projectionMatrix * mvPosition;
-            
-            // Size attenuation
-            gl_PointSize = aSize * (300.0 / -mvPosition.z);
-            
-            // Fade out near top and bottom
+            gl_PointSize = aSize * (300.0 / -mvPosition.z) * (1.0 + uSync);
             vPointOpacity = smoothstep(0.0, 5.0, pos.y) * smoothstep(40.0, 35.0, pos.y);
           }
         `}
         fragmentShader={`
           uniform vec3 uColor;
+          uniform float uSync;
           varying float vPointOpacity;
           void main() {
-            // Distance from center of point
             float d = length(gl_PointCoord - vec2(0.5));
-            // Soft circle using smoothstep
-            float finalOpacity = smoothstep(0.5, 0.1, d) * 0.5 * vPointOpacity;
+            float ring = smoothstep(0.5, 0.45, d) - smoothstep(0.4, 0.35, d);
+            float glow = smoothstep(0.5, 0.0, d);
+            float finalOpacity = (glow * 0.3 + ring * uSync) * vPointOpacity * (0.2 + uSync * 0.8);
             if (finalOpacity < 0.01) discard;
             gl_FragColor = vec4(uColor, finalOpacity);
           }

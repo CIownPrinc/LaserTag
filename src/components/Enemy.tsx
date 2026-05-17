@@ -37,6 +37,7 @@ export function Enemy({ data }: { data: EnemyData }) {
   
   const gameState = useGameStore(state => state.gameState);
   const playerState = useGameStore(state => state.playerState);
+  const syncLevel = useGameStore(state => state.syncLevel);
   const otherPlayers = useGameStore(state => state.otherPlayers);
   const powerUps = useGameStore(state => state.powerUps);
   const hitPlayer = useGameStore(state => state.hitPlayer);
@@ -217,13 +218,18 @@ export function Enemy({ data }: { data: EnemyData }) {
     const direction = new THREE.Vector3();
     const desiredVel = new THREE.Vector3();
 
+    // Adaptive Multipliers
+    const speedMult = 0.7 + (syncLevel / 100) * 0.6; // 0.7x to 1.3x
+    const cooldownMult = 1.3 - (syncLevel / 100) * 0.6; // 1.3x to 0.7x
+    const accuracyMult = 1.0 - (syncLevel / 100) * 0.5; // Spread narrows as sync increases
+
     if (state.current === 'chase' && closestTargetPos) {
       direction.subVectors(closestTargetPos, currentPos).normalize();
-      desiredVel.copy(direction).multiplyScalar(ENEMY_SPEED[data.type]);
+      desiredVel.copy(direction).multiplyScalar(ENEMY_SPEED[data.type] * speedMult);
 
       if (targetType !== 'powerup') {
         const strafe = new THREE.Vector3().crossVectors(direction, new THREE.Vector3(0, 1, 0)).normalize();
-        desiredVel.addScaledVector(strafe, strafeDir.current * 3);
+        desiredVel.addScaledVector(strafe, strafeDir.current * 3 * speedMult);
       }
 
       // Throttled Avoidance (every 5 frames)
@@ -241,16 +247,16 @@ export function Enemy({ data }: { data: EnemyData }) {
       }
       desiredVel.add(cachedObstacleAvoidance.current);
       
-      // Shooting logic - still checked every frame but cooldown is large anyway
+      // Shooting logic
       const now = Date.now();
-      const currentShootCooldown = SHOOT_COOLDOWN[data.type];
+      const currentShootCooldown = SHOOT_COOLDOWN[data.type] * cooldownMult;
       const currentShootDist = SHOOT_DIST[data.type];
 
       if (targetType !== 'powerup' && closestDist < currentShootDist && now - lastShootTime.current > currentShootCooldown) {
         const rayDir = new THREE.Vector3().subVectors(closestTargetPos, currentPos).normalize();
         
-        // Better accuracy, but still misses sometimes
-        const spread = targetType === 'player' ? 0.08 : 0.12;
+        // Spread narrows with higher sync (making them more accurate)
+        const spread = (targetType === 'player' ? 0.08 : 0.12) * accuracyMult;
         rayDir.x += (Math.random() - 0.5) * spread;
         rayDir.y += (Math.random() - 0.5) * spread;
         rayDir.z += (Math.random() - 0.5) * spread;

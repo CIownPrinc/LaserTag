@@ -1,6 +1,6 @@
 {
-  "name": "DEFUNCT/BUGGED LASER TAG GAME",
-  "description": "Battle players worldwide in real-time multiplayer laser tag. Hella bugged",
+  "name": "NEURAL LINK: SIGNAL CLARITY",
+  "description": "A high-stakes fast-paced multiplayer laser tag shooter. Master movement, collect powerups, and dominate the arena.",
   "requestFramePermissions": [],
-  "majorCapabilities": []
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

@@ -28,11 +28,13 @@ export function Player() {
   const setShooting = useGameStore(state => state.setShooting);
   const hitEnemy = useGameStore(state => state.hitEnemy);
   const addParticles = useGameStore(state => state.addParticles);
+  const signalColor = useGameStore(state => state.signalColor);
 
   const pointerLocked = useGameStore(state => state.pointerLocked);
   const isMobile = useGameStore(state => state.isMobile);
   
   const isGrounded = useRef(false);
+  const wasGrounded = useRef(false);
   const isCrouching = useRef(false);
   const lastEmitTime = useRef(0);
   const lastShootTime = useRef(0);
@@ -45,8 +47,10 @@ export function Player() {
   const tiltAngle = useRef(0);
   const targetTilt = useRef(0);
   const recoilOffset = useRef(new THREE.Vector2(0, 0));
+  const landingDip = useRef(0);
 
   const updatePlayerPosition = useGameStore(state => state.updatePlayerPosition);
+  const setSprinting = useGameStore(state => state.setSprinting);
 
   // Shooting logic function
   const shoot = () => {
@@ -119,7 +123,7 @@ export function Player() {
         }
       }
       
-      addParticles(endPos, '#00ffff');
+      addParticles(endPos, signalColor);
       soundManager.playHit(endPos, [camera.position.x, camera.position.y, camera.position.z]);
     } else {
       endPos = [
@@ -127,9 +131,10 @@ export function Player() {
         camera.position.y + raycaster.ray.direction.y * MAX_LASER_DIST,
         camera.position.z + raycaster.ray.direction.z * MAX_LASER_DIST
       ];
+      useGameStore.getState().missShot();
     }
 
-    addLaser(startPos, endPos, '#00ffff');
+    addLaser(startPos, endPos, signalColor);
     
     // UI Feedback for shooting
     setShooting(true);
@@ -157,11 +162,19 @@ export function Player() {
       
       // Ground check
       const ray = new rapier.Ray(
-        { x: body.current.translation().x, y: body.current.translation().y + 0.1, z: body.current.translation().z },
+        { x: body.current.translation().x, y: body.current.translation().y, z: body.current.translation().z },
         { x: 0, y: -1, z: 0 }
       );
-      const groundHit = world.castRay(ray, 0.6, true);
+      const groundHit = world.castRay(ray, 1.1, true);
+      wasGrounded.current = isGrounded.current;
       isGrounded.current = !!groundHit;
+
+      // Handle Landing
+      if (isGrounded.current && !wasGrounded.current) {
+        landingDip.current = 0.3;
+        soundManager.playWalk(); // Impact sound
+      }
+      landingDip.current = THREE.MathUtils.lerp(landingDip.current, 0, delta * 10);
 
       // Input mapping
       const crouchPressed = k.crouch || mobileInput.crouch;
@@ -170,10 +183,15 @@ export function Player() {
 
       if (isCrouching.current && !wasCrouching) soundManager.playCrouch();
 
+      // Sprinting
+      const sprintPressed = k.sprint && k.forward && !isCrouching.current && isGrounded.current;
+      setSprinting(sprintPressed);
+
       if ((k.jump || mobileInput.jump) && isGrounded.current) {
         body.current.applyImpulse({ x: 0, y: 8.5, z: 0 }, true);
         soundManager.playJump();
         isGrounded.current = false;
+        landingDip.current = -0.1; // Slight upward kick on jump
       }
 
       // Dash
@@ -211,8 +229,10 @@ export function Player() {
       const combinedMoveX = (k.right ? 1 : 0) - (k.left ? 1 : 0) + joyMoveX;
       const combinedMoveZ = (k.forward ? 1 : 0) - (k.backward ? 1 : 0) + joyMoveZ;
 
+      const isSprinting = k.sprint && combinedMoveZ > 0 && !isCrouching.current && isGrounded.current;
+
       // View tilting
-      targetTilt.current = -combinedMoveX * 0.05;
+      targetTilt.current = -combinedMoveX * 0.04;
       tiltAngle.current = THREE.MathUtils.lerp(tiltAngle.current, targetTilt.current, delta * 5);
 
       const direction = new THREE.Vector3();
@@ -221,7 +241,8 @@ export function Player() {
       
       if (direction.lengthSq() > 0) {
         if (direction.lengthSq() > 1) direction.normalize();
-        const moveSpeed = isCrouching.current ? currentSpeed * 0.4 : currentSpeed;
+        let moveSpeed = isCrouching.current ? currentSpeed * 0.4 : currentSpeed;
+        if (isSprinting) moveSpeed *= 1.5;
         direction.multiplyScalar(moveSpeed);
       }
 
@@ -247,30 +268,31 @@ export function Player() {
     // Camera follow position
     const pos = body.current.translation();
     const targetHeight = isCrouching.current ? 0.6 : 1.6;
-    const bobY = Math.sin(bobTimer.current) * 0.02;
     
-    // Jump/Dash Visuals
-    const dashFactor = (now - useGameStore.getState().dashCooldown > 1000) ? 0 : 1;
-    const jumpVisual = !isGrounded.current ? 0.1 : 0;
+    // Increased bobbing during sprint
+    const isActuallySprinting = k.sprint && k.forward && !isCrouching.current && isGrounded.current;
+    const bobIntensity = isActuallySprinting ? 1.8 : 1.0;
+    const bobY = Math.sin(bobTimer.current) * 0.02 * bobIntensity;
 
     // Update camera position
     currentCamera.position.set(
       pos.x, 
-      THREE.MathUtils.lerp(currentCamera.position.y, pos.y + targetHeight + bobY, delta * 15), 
+      THREE.MathUtils.lerp(currentCamera.position.y, pos.y + targetHeight + bobY - landingDip.current, delta * 12), 
       pos.z
     );
 
-    // Camera recoil handling - we add it directly to rotation but we MUST clamp x
-    recoilOffset.current.x = THREE.MathUtils.lerp(recoilOffset.current.x, 0, delta * 10);
-    recoilOffset.current.y = THREE.MathUtils.lerp(recoilOffset.current.y, 0, delta * 10);
+    // Camera recoil handling
+    recoilOffset.current.x = THREE.MathUtils.lerp(recoilOffset.current.x, 0, delta * 12);
+    recoilOffset.current.y = THREE.MathUtils.lerp(recoilOffset.current.y, 0, delta * 12);
     
-    // Apply recoil as delta
-    currentCamera.rotation.x += recoilOffset.current.y;
+    // Apply recoil and clamp
+    const newRotX = currentCamera.rotation.x + recoilOffset.current.y;
+    currentCamera.rotation.x = Math.max(-1.5, Math.min(1.5, newRotX));
     currentCamera.rotation.y += recoilOffset.current.x;
-
-    // Clamp rotation.x to prevent flipping
-    currentCamera.rotation.x = Math.max(-Math.PI / 2 + 0.1, Math.min(Math.PI / 2 - 0.1, currentCamera.rotation.x));
-
+    
+    // Reset rotation.y jitter
+    recoilOffset.current.x *= 0.9;
+    
     // Add Screen Shake
     if (screenShake > 0) {
       currentCamera.position.x += (Math.random() - 0.5) * screenShake;
@@ -278,14 +300,14 @@ export function Player() {
       currentCamera.position.z += (Math.random() - 0.5) * screenShake;
     }
 
-    // Add tilting to rotation
+    // Camera Tilt (Strafe tilt + look tilt)
     currentCamera.rotation.z = tiltAngle.current;
 
     // FOV handling
     if ((currentCamera as THREE.PerspectiveCamera).isPerspectiveCamera) {
       const pCamera = currentCamera as THREE.PerspectiveCamera;
-      const isDashing = now - (useGameStore.getState().dashCooldown + 1.5) < 0.3; // Check if we just dashed
-      const targetFov = (activePowerUps.speed > now || isDashing) ? 95 : 75;
+      const isDashing = now - (useGameStore.getState().dashCooldown + 1.5) < 0.3;
+      const targetFov = (activePowerUps.speed > now || isDashing || isSprinting) ? 95 : 75;
       pCamera.fov = THREE.MathUtils.lerp(pCamera.fov, targetFov, delta * 8);
       pCamera.updateProjectionMatrix();
     }
@@ -311,8 +333,8 @@ export function Player() {
   if (isMobile && (Math.abs(mobileInput.look.x) > 0.01 || Math.abs(mobileInput.look.y) > 0.01)) {
     const lookSpeed = sensitivity * 0.5;
     currentCamera.rotation.y -= mobileInput.look.x * lookSpeed;
-    currentCamera.rotation.x -= mobileInput.look.y * lookSpeed;
-    currentCamera.rotation.x = Math.max(-Math.PI / 2 + 0.1, Math.min(Math.PI / 2 - 0.1, currentCamera.rotation.x));
+    const newMobileRotX = currentCamera.rotation.x - mobileInput.look.y * lookSpeed;
+    currentCamera.rotation.x = Math.max(-1.5, Math.min(1.5, newMobileRotX));
   }
 
     // Gun Visual recoil handling
@@ -324,9 +346,10 @@ export function Player() {
 
 
   useEffect(() => {
-    const handleMouseDown = () => {
+    const handleMouseDown = (e: MouseEvent) => {
       useGameStore.setState({ isMouseDown: true });
-      if (!isMobile && document.pointerLockElement && gameState === 'playing' && playerState === 'active') {
+      if (!isMobile && gameState === 'playing' && playerState === 'active') {
+        useGameStore.getState().requestGameLock();
         shoot();
       }
     };
@@ -348,6 +371,7 @@ export function Player() {
     <>
       {!isMobile && gameState === 'playing' && (
         <PointerLockControls 
+          selector="#game-canvas"
           onLock={() => setPointerLocked(true)}
           onUnlock={() => setPointerLocked(false)}
         />
@@ -364,7 +388,7 @@ export function Player() {
         canSleep={false}
         ccd={true}
       >
-        <CapsuleCollider args={[0.5, 0.5]} position={[0, 1, 0]} friction={0} />
+        <CapsuleCollider args={[0.5, 0.5]} position={[0, 0, 0]} friction={0} />
       </RigidBody>
 
       {/* First Person Gun */}
@@ -383,11 +407,11 @@ export function Player() {
           {/* Neon accents */}
           <mesh position={[0, 0.08, 0.1]}>
             <boxGeometry args={[0.11, 0.02, 0.2]} />
-            <meshBasicMaterial color="#00ffff" toneMapped={false} />
+            <meshBasicMaterial color={signalColor} toneMapped={false} />
           </mesh>
           <mesh position={[0, 0.05, -0.25]} rotation={[Math.PI / 2, 0, 0]}>
             <cylinderGeometry args={[0.035, 0.035, 0.05, 8]} />
-            <meshBasicMaterial color="#ff00ff" toneMapped={false} />
+            <meshBasicMaterial color={signalColor} toneMapped={false} />
           </mesh>
           {/* Barrel Tip Reference */}
           <group ref={gunBarrelRef} position={[0, 0.05, -0.3]} />

@@ -11,9 +11,9 @@ export type PowerUpType = 'speed' | 'shield' | 'rapidfire' | 'health';
 export interface MatchResults {
   rank: number;
   totalPlayers: number;
-  score: number;
-  kills: number;
-  maxMultiplier: number;
+  overallSync: number;
+  stabilizations: number;
+  maxThroughput: number;
 }
 
 export interface PowerUpData {
@@ -74,7 +74,7 @@ interface GameStore {
   killCount: number;
   health: number;
   lastHitDirection: number | null;
-  neuralRank: 'RECRUIT' | 'OPERATIVE' | 'ELITE' | 'CHAMPION';
+  neuralRank: 'RECRUIT' | 'OPERATIVE' | 'ELITE' | 'MASTER';
   timeLeft: number;
   playerState: EntityState;
   assistantMessages: { id: string; text: string; timestamp: number }[];
@@ -89,6 +89,9 @@ interface GameStore {
   screenShake: number;
   isShooting: boolean;
   isMouseDown: boolean;
+  isSprinting: boolean;
+  isHit: boolean;
+  signalColor: string;
   sensitivity: number;
   playerRotation: number;
   matchResults: MatchResults | null;
@@ -96,15 +99,19 @@ interface GameStore {
   objectives: Array<{ id: string; text: string; completed: boolean }>;
   alertMessage: { text: string; type: 'info' | 'warning' | 'danger'; timestamp: number } | null;
   pointerLocked: boolean;
+  lastPointerLockExitTime: number;
   isMobile: boolean;
   username: string;
+  trainingMode: boolean;
   setUsername: (name: string) => void;
+  setSignalColor: (color: string) => void;
   setIsMobile: (isMobile: boolean) => void;
+  setSprinting: (isSprinting: boolean) => void;
   
   socket: Socket | null;
   otherPlayers: Record<string, PlayerData>;
 
-  startGame: () => void;
+  startGame: (training?: boolean) => void;
   endGame: () => void;
   leaveGame: () => void;
   updateTime: (delta: number) => void;
@@ -136,6 +143,8 @@ interface GameStore {
   completeObjective: (id: string) => void;
   setPointerLocked: (locked: boolean) => void;
   performDash: () => void;
+  requestGameLock: () => void;
+  missShot: () => void;
 }
 
 export const useGameStore = create<GameStore>((set, get) => ({
@@ -167,28 +176,35 @@ export const useGameStore = create<GameStore>((set, get) => ({
   screenShake: 0,
   isShooting: false,
   isMouseDown: false,
+  isSprinting: false,
+  isHit: false,
+  signalColor: '#22d3ee', // Default Cyan
   sensitivity: 1.5,
   playerRotation: 0,
   matchResults: null,
   wave: 1,
   objectives: [
-    { id: 'kills', text: 'Eliminate 5 Units', completed: false },
+    { id: 'kills', text: 'Defeat 5 Enemies', completed: false },
     { id: 'multiplier', text: 'Reach x3 Multiplier', completed: false },
     { id: 'survival', text: 'Health above 50%', completed: false }
   ],
   alertMessage: null,
   pointerLocked: false,
+  lastPointerLockExitTime: 0,
   isMobile: false,
   username: 'OPERATOR',
+  trainingMode: false,
   socket: null,
   otherPlayers: {},
   mobileInput: { move: { x: 0, y: 0 }, look: { x: 0, y: 0 }, shooting: false, crouch: false, jump: false },
 
   setUsername: (username) => set({ username }),
+  setSignalColor: (signalColor) => set({ signalColor }),
   setIsMobile: (isMobile) => set({ isMobile }),
   setMobileInput: (input) => set((state) => ({ mobileInput: { ...state.mobileInput, ...input } })),
   setSensitivity: (sensitivity) => set({ sensitivity }),
   setShooting: (isShooting) => set({ isShooting }),
+  setSprinting: (isSprinting) => set({ isSprinting }),
   
   setAlert: (text, type) => {
     const timestamp = Date.now();
@@ -207,12 +223,20 @@ export const useGameStore = create<GameStore>((set, get) => ({
   },
 
   spawnWave: (wave) => set((state) => {
-    const enemiesPerWave = Math.min(20, 5 + wave * 2);
+    const syncScale = state.syncLevel / 100; // 0.0 to 1.0
+    const baseEnemies = Math.min(20, 5 + wave * 2);
+    const enemiesPerWave = Math.floor(baseEnemies * (0.8 + syncScale * 0.4)); // Scale total count slightly
+    
     const newEnemies = Array.from({ length: enemiesPerWave }).map((_, i) => {
       const angle = (i / enemiesPerWave) * Math.PI * 2;
       const dist = 40 + Math.random() * 20;
       const typeRand = Math.random();
-      const type: 'grunt' | 'heavy' | 'scout' = typeRand > 0.8 ? 'heavy' : typeRand > 0.6 ? 'scout' : 'grunt';
+      
+      // Higher sync increases chance of harder enemies
+      const heavyThreshold = 0.8 - (syncScale * 0.2); // At 100 sync, heavy starts at 0.6 instead of 0.8
+      const scoutThreshold = 0.6 - (syncScale * 0.2); 
+      
+      const type: 'grunt' | 'heavy' | 'scout' = typeRand > heavyThreshold ? 'heavy' : typeRand > scoutThreshold ? 'scout' : 'grunt';
       
       return {
         id: `bot-w${wave}-${i}`,
@@ -230,9 +254,33 @@ export const useGameStore = create<GameStore>((set, get) => ({
     objectives: state.objectives.map(obj => obj.id === id ? { ...obj, completed: true } : obj)
   })),
   
-  setPointerLocked: (pointerLocked) => set({ pointerLocked }),
+  setPointerLocked: (locked) => {
+    set({ 
+      pointerLocked: locked,
+      lastPointerLockExitTime: !locked ? Date.now() : get().lastPointerLockExitTime 
+    });
+  },
+  requestGameLock: () => {
+    if (get().isMobile) return;
+    const now = Date.now();
+    const canLock = now - get().lastPointerLockExitTime > 1300;
+    if (canLock && !document.pointerLockElement) {
+      try {
+        const canvas = document.getElementById('game-canvas');
+        if (canvas) {
+          const promise = canvas.requestPointerLock() as any;
+          // Modern browsers return a promise, we should handle rejection to avoid console noise
+          if (promise && promise.catch) {
+            promise.catch((e: any) => console.warn('Pointer lock rejected:', e));
+          }
+        }
+      } catch (err) {
+        console.warn('Pointer lock exception:', err);
+      }
+    }
+  },
 
-  startGame: () => {
+  startGame: (training = false) => {
     const { socket } = get();
     if (socket) socket.disconnect();
     
@@ -245,7 +293,8 @@ export const useGameStore = create<GameStore>((set, get) => ({
         otherPlayers,
         powerUps: data.powerUps,
         gameState: 'playing',
-        timeLeft: 120,
+        timeLeft: training ? 3600 : 120, // 1 hour for training
+        trainingMode: training,
         score: 0,
         multiplier: 1,
         health: 100,
@@ -254,7 +303,10 @@ export const useGameStore = create<GameStore>((set, get) => ({
         isOverheated: false,
         alertMessage: null,
         activePowerUps: { speed: 0, shield: 0, rapidfire: 0, health: 0 },
-        syncLevel: 50
+        syncLevel: 50,
+        killCount: 0,
+        maxMultiplier: 1,
+        neuralRank: 'RECRUIT'
       });
       // spawnWave is now called locally to ensure enemies exist even without server response
     });
@@ -297,20 +349,55 @@ export const useGameStore = create<GameStore>((set, get) => ({
       score: 0,
       health: 100,
       wave: 1,
-      timeLeft: 120
+      timeLeft: training ? 3600 : 120,
+      trainingMode: training,
+      killCount: 0,
+      maxMultiplier: 1,
+      syncLevel: 50,
+      activePowerUps: { speed: 0, shield: 0, rapidfire: 0, health: 0 }
     });
     get().spawnWave(1);
-    get().addAssistantMessage("NEURAL LINK ESTABLISHED. INITIALIZING COMBAT PROTOCOLS.");
+    get().addAssistantMessage(training ? "PRACTICE SESSION INITIALIZED." : "NEURAL LINK ESTABLISHED. INITIALIZING COMBAT PROTOCOLS.");
   },
 
   endGame: () => {
     get().socket?.disconnect();
-    set({ gameState: 'gameover', socket: null });
+    const state = get();
+    set({ 
+      gameState: 'gameover', 
+      socket: null,
+      matchResults: {
+        rank: 1,
+        totalPlayers: Object.keys(state.otherPlayers).length + 1,
+        overallSync: state.score,
+        stabilizations: state.killCount,
+        maxThroughput: state.maxMultiplier
+      }
+    });
   },
 
   leaveGame: () => {
     get().socket?.disconnect();
-    set({ gameState: 'menu', socket: null, otherPlayers: {}, enemies: [], lasers: [], particles: [], events: [], score: 0 });
+    set({ 
+      gameState: 'menu', 
+      socket: null, 
+      otherPlayers: {}, 
+      enemies: [], 
+      lasers: [], 
+      particles: [], 
+      events: [], 
+      score: 0,
+      multiplier: 1,
+      syncLevel: 50,
+      timeLeft: 120,
+      trainingMode: false,
+      killCount: 0,
+      maxMultiplier: 1,
+      weaponHeat: 0,
+      isOverheated: false,
+      activePowerUps: { speed: 0, shield: 0, rapidfire: 0, health: 0 },
+      matchResults: null
+    });
   },
 
   updateTime: (delta) => set((state) => {
@@ -339,6 +426,11 @@ export const useGameStore = create<GameStore>((set, get) => ({
     if (newSync > 50) newSync -= delta * 1.5;
     else if (newSync < 50) newSync += delta * 0.8;
 
+    // Survival Objective: Reached 60s with Health > 50
+    if (newTime < 60 && state.health > 50 && !state.objectives.find(o => o.id === 'survival')?.completed) {
+      get().completeObjective('survival');
+    }
+
     if (newTime <= 0) {
       state.socket?.disconnect();
       return { 
@@ -348,9 +440,9 @@ export const useGameStore = create<GameStore>((set, get) => ({
         matchResults: {
           rank: 1,
           totalPlayers: Object.keys(state.otherPlayers).length + 1,
-          score: state.score,
-          kills: state.killCount,
-          maxMultiplier: state.maxMultiplier
+          overallSync: state.score,
+          stabilizations: state.killCount,
+          maxThroughput: state.maxMultiplier
         }
       };
     }
@@ -368,10 +460,19 @@ export const useGameStore = create<GameStore>((set, get) => ({
   hitPlayer: (direction) => set((state) => {
     if (state.playerState === 'disabled' || state.gameState !== 'playing') return state;
     const newHealth = Math.max(0, state.health - 25);
+    const newSync = Math.max(0, state.syncLevel - 15); // Neural Static on hit
+    
     if (newHealth <= 0) {
-      return { health: 0, playerState: 'disabled', playerDisabledUntil: Date.now() + 3000, screenShake: 1.0, lastHitDirection: null };
+      return { 
+        health: 0, 
+        syncLevel: 0,
+        playerState: 'disabled', 
+        playerDisabledUntil: Date.now() + 3000, 
+        screenShake: 1.0, 
+        lastHitDirection: null 
+      };
     }
-    return { health: newHealth, screenShake: 0.5, lastHitDirection: direction || null };
+    return { health: newHealth, syncLevel: newSync, screenShake: 0.5, lastHitDirection: direction || null };
   }),
 
   hitEnemy: (id, byPlayer = false) => set((state) => {
@@ -387,12 +488,22 @@ export const useGameStore = create<GameStore>((set, get) => ({
       newMultiplier = Math.min(10, state.multiplier + 0.5);
       newScore += 100 * Math.floor(newMultiplier);
       newSync = Math.min(100, state.syncLevel + 10);
+      set({ isHit: true });
+      setTimeout(() => set({ isHit: false }), 150);
     }
 
-    const nextRank = newScore > 10000 ? 'CHAMPION' : newScore > 5000 ? 'ELITE' : newScore > 2000 ? 'OPERATIVE' : 'RECRUIT';
+    const nextRank = newScore > 10000 ? 'MASTER' : newScore > 5000 ? 'ELITE' : newScore > 2000 ? 'OPERATIVE' : 'RECRUIT';
 
     if (nextRank !== state.neuralRank) {
-      setTimeout(() => get().addAssistantMessage(`PROMOTED TO ${nextRank} STATUS`), 100);
+      setTimeout(() => get().addAssistantMessage(`PROMOTED TO ${nextRank} RANK`), 100);
+    }
+
+    // Check Objectives
+    if (state.killCount + 1 >= 5) {
+      get().completeObjective('kills');
+    }
+    if (newMultiplier >= 3) {
+      get().completeObjective('multiplier');
     }
 
     return { 
@@ -414,6 +525,12 @@ export const useGameStore = create<GameStore>((set, get) => ({
     syncLevel: Math.max(0, state.syncLevel - 5),
     weaponHeat: Math.max(0, state.weaponHeat - 20) 
   })),
+
+  missShot: () => set(state => {
+    // Only penalize if we were reasonably synced
+    if (state.syncLevel < 10) return state;
+    return { syncLevel: Math.max(5, state.syncLevel - 2) };
+  }),
 
   collectPowerUp: (id) => {
     const { socket } = get();
