@@ -30,7 +30,6 @@ export function Player() {
   const addParticles = useGameStore(state => state.addParticles);
   const signalColor = useGameStore(state => state.signalColor);
 
-  const pointerLocked = useGameStore(state => state.pointerLocked);
   const isMobile = useGameStore(state => state.isMobile);
   
   const isGrounded = useRef(false);
@@ -347,6 +346,7 @@ export function Player() {
 
   useEffect(() => {
     const handleMouseDown = (e: MouseEvent) => {
+      if (e.button !== 0) return;
       useGameStore.setState({ isMouseDown: true });
       if (!isMobile && gameState === 'playing' && playerState === 'active') {
         useGameStore.getState().requestGameLock();
