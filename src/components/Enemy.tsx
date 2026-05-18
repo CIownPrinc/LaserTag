@@ -277,25 +277,25 @@ export function Enemy({ data }: { data: EnemyData }) {
             if (userData.name === 'player') {
               hitPlayer(Math.atan2(rayDir.x, rayDir.z));
               addParticles([camera.position.x, camera.position.y, camera.position.z], '#ff0000');
-              addLaser([startPos.x, startPos.y, startPos.z], [camera.position.x, camera.position.y, camera.position.z], '#ff0000');
+              addLaser([startPos.x, startPos.y, startPos.z], [camera.position.x, camera.position.y, camera.position.z], '#ff0000', false);
               lastShootTime.current = now;
             } else if (userData.name && otherPlayers[userData.name]) {
               // Hit other human player in multiplayer
               hitEnemy(userData.name); // Using hitEnemy for multiplayer target
               const hitPoint = shootRay.pointAt(hit.timeOfImpact);
               addParticles([hitPoint.x, hitPoint.y, hitPoint.z], '#ff0000');
-              addLaser([startPos.x, startPos.y, startPos.z], [hitPoint.x, hitPoint.y, hitPoint.z], '#ff0000');
+              addLaser([startPos.x, startPos.y, startPos.z], [hitPoint.x, hitPoint.y, hitPoint.z], '#ff0000', false);
               lastShootTime.current = now;
             } else if (userData.name?.startsWith('bot-')) {
               hitEnemy(userData.name);
               const hitPoint = shootRay.pointAt(hit.timeOfImpact);
               addParticles([hitPoint.x, hitPoint.y, hitPoint.z], '#ff0000');
-              addLaser([startPos.x, startPos.y, startPos.z], [hitPoint.x, hitPoint.y, hitPoint.z], '#ff0000');
+              addLaser([startPos.x, startPos.y, startPos.z], [hitPoint.x, hitPoint.y, hitPoint.z], '#ff0000', false);
               lastShootTime.current = now;
             } else {
               const hitPoint = shootRay.pointAt(hit.timeOfImpact);
               addParticles([hitPoint.x, hitPoint.y, hitPoint.z], '#ff0000');
-              addLaser([startPos.x, startPos.y, startPos.z], [hitPoint.x, hitPoint.y, hitPoint.z], '#ff0000');
+              addLaser([startPos.x, startPos.y, startPos.z], [hitPoint.x, hitPoint.y, hitPoint.z], '#ff0000', false);
               lastShootTime.current = now;
             }
           }
