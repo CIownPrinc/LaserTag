@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 
 export function getMoveAxes(
-  keys: Record<string, boolean>,
+  keys: { right: boolean; left: boolean; forward: boolean; backward: boolean },
   mobileMove: { x: number; y: number }
 ) {
   const joyMoveZ = -mobileMove.y;
