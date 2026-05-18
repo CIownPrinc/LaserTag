@@ -56,8 +56,7 @@ export function Game() {
       gl={{ 
         antialias: true, 
         alpha: true,
-        powerPreference: 'high-performance',
-        preserveDrawingBuffer: true
+        powerPreference: 'high-performance'
       }}
     >
       <Suspense fallback={null}>
