@@ -1,6 +1,7 @@
 import { useEffect, useState, Component, ReactNode, memo, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { soundManager } from './services/soundService';
+import { backendApi } from './services/backendApi';
 import { KeyboardControls } from '@react-three/drei';
 import { useGameStore } from './store';
 import { Game } from './components/Game';
@@ -88,7 +89,7 @@ const PauseMenu = ({ onResume }: { onResume: () => void }) => {
             <input 
               type="text"
               value={username}
-              onChange={(e) => setUsername(e.target.value.toUpperCase())}
+              onChange={(e) => { const username = e.target.value.toUpperCase(); setUsername(username); void backendApi.updateProfile({ username }); }}
               className="w-full bg-white/5 border border-white/10 rounded-xl p-4 text-white font-bold outline-none focus:border-cyan-400/50 uppercase tracking-widest text-sm transition-all"
               placeholder="ENTER CODENAME..."
             />
@@ -108,7 +109,7 @@ const PauseMenu = ({ onResume }: { onResume: () => void }) => {
               max="5" 
               step="0.1"
               value={sensitivity}
-              onChange={(e) => setSensitivity(parseFloat(e.target.value))}
+              onChange={(e) => { const sensitivity = parseFloat(e.target.value); setSensitivity(sensitivity); void backendApi.updateSettings({ sensitivity }); }}
               className="w-full h-1.5 bg-white/5 rounded-full appearance-none cursor-pointer accent-cyan-400"
             />
           </div>
@@ -119,7 +120,7 @@ const PauseMenu = ({ onResume }: { onResume: () => void }) => {
               {SIGNAL_COLORS.map((c) => (
                 <button
                   key={c.name}
-                  onClick={() => setSignalColor(c.color)}
+                  onClick={() => { setSignalColor(c.color); void backendApi.updateSettings({ signalColor: c.color }); }}
                   className={`w-8 h-8 rounded-lg border-2 transition-all ${signalColor === c.color ? 'border-white scale-110' : 'border-transparent opacity-40 hover:opacity-100'}`}
                   style={{ backgroundColor: c.color }}
                 />
@@ -292,7 +293,7 @@ const Menu = () => {
                   {SIGNAL_COLORS.map(c => (
                     <button 
                       key={c.name}
-                      onClick={() => setSignalColor(c.color)}
+                      onClick={() => { setSignalColor(c.color); void backendApi.updateSettings({ signalColor: c.color }); }}
                       className={`w-6 h-6 rounded-md transition-all ${signalColor === c.color ? 'ring-2 ring-white ring-offset-2 ring-offset-black scale-110' : 'opacity-40 hover:opacity-100'}`}
                       style={{ backgroundColor: c.color }}
                     />
@@ -326,7 +327,7 @@ const Menu = () => {
                   <input 
                     type="text" 
                     value={username}
-                    onChange={(e) => setUsername(e.target.value.toUpperCase())}
+                    onChange={(e) => { const username = e.target.value.toUpperCase(); setUsername(username); void backendApi.updateProfile({ username }); }}
                     className="bg-transparent text-white font-mono text-xl outline-none text-right placeholder-white/10"
                     placeholder="ENTER ID..."
                   />
@@ -521,6 +522,17 @@ export default function App() {
     }
   }, [syncLevel, multiplier, gameState]);
 
+  useEffect(() => {
+    if (!isMobile) return;
+    const preventDefault = (e: Event) => e.preventDefault();
+    document.addEventListener('gesturestart', preventDefault, { passive: false } as AddEventListenerOptions);
+    document.addEventListener('gesturechange', preventDefault, { passive: false } as AddEventListenerOptions);
+    return () => {
+      document.removeEventListener('gesturestart', preventDefault as EventListener);
+      document.removeEventListener('gesturechange', preventDefault as EventListener);
+    };
+  }, [isMobile]);
+
   return (
     <KeyboardControls
       map={[
@@ -534,7 +546,7 @@ export default function App() {
         { name: 'crouch', keys: ['Control', 'c', 'C'] },
       ]}
     >
-      <div className="w-full h-full bg-black relative overflow-hidden select-none font-sans">
+      <div className="w-full h-full bg-black relative overflow-hidden select-none font-sans" style={isMobile ? { touchAction: 'none' } : undefined}>
       <div className="absolute inset-0">
         <ErrorBoundary>
           <Game />

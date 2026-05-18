@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
 */
 
-import { useEffect, useRef, useState } from 'react';
+import { useRef, useState } from 'react';
 import { useGameStore } from '../store';
 
 interface JoystickProps {
@@ -92,14 +92,9 @@ function Joystick({ onMove, className, label }: JoystickProps) {
 export function MobileControls() {
   const setMobileInput = useGameStore(state => state.setMobileInput);
   const mobileInput = useGameStore(state => state.mobileInput);
-  const [shooting, setShooting] = useState(false);
-
-  useEffect(() => {
-    setMobileInput({ shooting });
-  }, [shooting, setMobileInput]);
 
   return (
-    <div className="absolute inset-x-0 bottom-0 pointer-events-none z-50 flex flex-col justify-end pb-8 px-6 select-none animate-in slide-in-from-bottom-8 duration-700">
+    <div className="absolute inset-x-0 bottom-0 pointer-events-none z-50 flex flex-col justify-end pb-[max(1rem,env(safe-area-inset-bottom))] px-3 sm:px-6 select-none animate-in slide-in-from-bottom-8 duration-700">
       <div className="flex justify-between items-end w-full pointer-events-auto gap-4 max-w-5xl mx-auto">
         {/* Left Side: Movement */}
         <div className="flex flex-col gap-6">
@@ -135,23 +130,24 @@ export function MobileControls() {
         <div className="flex flex-col items-end gap-10">
            {/* Shoot Button */}
            <button
-            className={`w-28 h-28 rounded-full border-2 flex items-center justify-center active:scale-95 transition-all touch-none relative ${shooting ? 'bg-red-500/30 border-red-500 shadow-[0_0_40px_rgba(239,68,68,0.4)]' : 'bg-red-500/5 border-red-500/30'}`}
+            className={`w-24 h-24 sm:w-28 sm:h-28 rounded-full border-2 flex items-center justify-center active:scale-95 transition-all touch-none relative ${mobileInput.shooting ? 'bg-red-500/30 border-red-500 shadow-[0_0_40px_rgba(239,68,68,0.4)]' : 'bg-red-500/5 border-red-500/30'}`}
             onPointerDown={(e) => {
               e.currentTarget.setPointerCapture(e.pointerId);
-              setShooting(true);
+              setMobileInput({ shooting: true });
             }}
             onPointerUp={(e) => {
               e.currentTarget.releasePointerCapture(e.pointerId);
-              setShooting(false);
+              setMobileInput({ shooting: false });
             }}
             onPointerCancel={(e) => {
               e.currentTarget.releasePointerCapture(e.pointerId);
-              setShooting(false);
+              setMobileInput({ shooting: false });
             }}
+            onPointerLeave={() => setMobileInput({ shooting: false })}
             style={{ touchAction: 'none' }}
           >
             <div className="absolute inset-1 rounded-full border border-red-500/20 animate-pulse" />
-            <div className="w-16 h-16 bg-red-600/80 rounded-full shadow-[0_0_25px_rgba(239,68,68,0.8)] flex items-center justify-center border-t border-white/20">
+            <div className="w-14 h-14 sm:w-16 sm:h-16 bg-red-600/80 rounded-full shadow-[0_0_25px_rgba(239,68,68,0.8)] flex items-center justify-center border-t border-white/20">
                <div className="text-white font-black text-[10px] tracking-[0.3em] uppercase">ENGAGE</div>
             </div>
           </button>
