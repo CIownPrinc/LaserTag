@@ -521,6 +521,17 @@ export default function App() {
     }
   }, [syncLevel, multiplier, gameState]);
 
+  useEffect(() => {
+    if (!isMobile) return;
+    const preventDefault = (e: Event) => e.preventDefault();
+    document.addEventListener('gesturestart', preventDefault, { passive: false } as AddEventListenerOptions);
+    document.addEventListener('gesturechange', preventDefault, { passive: false } as AddEventListenerOptions);
+    return () => {
+      document.removeEventListener('gesturestart', preventDefault as EventListener);
+      document.removeEventListener('gesturechange', preventDefault as EventListener);
+    };
+  }, [isMobile]);
+
   return (
     <KeyboardControls
       map={[
@@ -534,7 +545,7 @@ export default function App() {
         { name: 'crouch', keys: ['Control', 'c', 'C'] },
       ]}
     >
-      <div className="w-full h-full bg-black relative overflow-hidden select-none font-sans">
+      <div className="w-full h-full bg-black relative overflow-hidden select-none font-sans" style={isMobile ? { touchAction: 'none' } : undefined}>
       <div className="absolute inset-0">
         <ErrorBoundary>
           <Game />
