@@ -3,6 +3,8 @@ import { create } from 'zustand';
 import * as THREE from 'three';
 import { io, Socket } from 'socket.io-client';
 import { soundManager } from './services/soundService';
+import { BackendEvents } from './contracts/backendEvents';
+import { backendApi } from './services/backendApi';
 
 export type GameState = 'menu' | 'playing' | 'gameover';
 export type EntityState = 'active' | 'disabled';
@@ -285,7 +287,10 @@ export const useGameStore = create<GameStore>((set, get) => ({
     if (socket) socket.disconnect();
     
     const newSocket = io();
-    newSocket.on('connect', () => newSocket.emit('joinGame'));
+    newSocket.on('connect', () => {
+      newSocket.emit('joinGame');
+      newSocket.emit(BackendEvents.PLAYER_SESSION_JOIN, { username: get().username, signalColor: get().signalColor, trainingMode: training });
+    });
     newSocket.on('gameJoined', (data) => {
       const otherPlayers = { ...data.players };
       delete otherPlayers[newSocket.id!];
@@ -342,6 +347,37 @@ export const useGameStore = create<GameStore>((set, get) => ({
       return { otherPlayers: players };
     }));
 
+
+    newSocket.on(BackendEvents.PLAYER_MOVE_SNAPSHOT, (data) => set(state => {
+      if (!state.otherPlayers[data.id]) return state;
+      return { otherPlayers: { ...state.otherPlayers, [data.id]: { ...state.otherPlayers[data.id], ...data } } };
+    }));
+
+    newSocket.on(BackendEvents.PLAYER_SHOT_BROADCAST, (data) => set(state => ({
+      lasers: [...state.lasers, { id: Math.random().toString(), ...data, timestamp: Date.now() }],
+      particles: [...state.particles, { id: Math.random().toString(), position: data.end, color: data.color, timestamp: Date.now() }]
+    })));
+
+    newSocket.on(BackendEvents.PLAYER_HIT_RESOLVED, (data) => set(state => {
+      const isLocalTarget = data.targetId === newSocket.id;
+      const isLocalShooter = data.shooterId === newSocket.id;
+      const newState: Partial<GameStore> = {};
+      if (isLocalTarget) {
+        newState.health = data.targetHealth;
+        if (data.targetHealth <= 0) {
+          newState.playerState = 'disabled';
+          newState.playerDisabledUntil = data.targetDisabledUntil;
+        }
+      }
+      if (isLocalShooter) newState.score = data.shooterScore;
+      return newState;
+    }));
+
+    newSocket.on(BackendEvents.PLAYER_LEFT, (id) => set(state => {
+      const players = { ...state.otherPlayers };
+      delete players[id];
+      return { otherPlayers: players };
+    }));
     set({ 
       gameState: 'playing', 
       socket: newSocket,
@@ -363,6 +399,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
   endGame: () => {
     get().socket?.disconnect();
     const state = get();
+    void backendApi.submitMatchEnd({ score: state.score, killCount: state.killCount, maxMultiplier: state.maxMultiplier, totalPlayers: Object.keys(state.otherPlayers).length + 1 });
     set({ 
       gameState: 'gameover', 
       socket: null,
@@ -534,7 +571,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
 
   collectPowerUp: (id) => {
     const { socket } = get();
-    if (socket) socket.emit('collectPowerUp', id);
+    if (socket) { socket.emit('collectPowerUp', id); socket.emit(BackendEvents.POWERUP_COLLECT_REQUEST, { powerUpId: id }); }
     
     // Local fallback/instant feedback
     const powerUp = get().powerUps.find(p => p.id === id);
@@ -553,6 +590,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
   },
   addLaser: (start, end, color, applyHeat = true) => {
     get().socket?.emit('shoot', { start, end, color });
+    get().socket?.emit(BackendEvents.PLAYER_SHOOT, { start, end, color });
     set(state => {
       const newHeat = applyHeat ? (state.isOverheated ? state.weaponHeat : Math.min(100, state.weaponHeat + 10)) : state.weaponHeat;
       const wasOverheated = state.isOverheated;
@@ -603,6 +641,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
   updatePlayerPosition: (position, rotation, isCrouching, isJumping) => {
     set({ playerRotation: rotation });
     get().socket?.emit('updatePosition', { position, rotation, isCrouching, isJumping });
+    get().socket?.emit(BackendEvents.PLAYER_MOVE_UPDATE, { position, rotation, isCrouching, isJumping });
   }
 }));
 
