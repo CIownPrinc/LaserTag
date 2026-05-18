@@ -10,9 +10,10 @@ import { PointerLockControls, useKeyboardControls } from '@react-three/drei';
 import * as THREE from 'three';
 import { useGameStore } from '../store';
 import { soundManager } from '../services/soundService';
-
-const SPEED = 12;
-const MAX_LASER_DIST = 100;
+import { PLAYER_BASE_SPEED, MAX_LASER_DISTANCE } from '../systems/player/constants';
+import { getFireRate } from '../systems/player/combat';
+import { clampPitch } from '../systems/player/camera';
+import { getMoveAxes, getPlanarBasis } from '../systems/player/input';
 
 export function Player() {
   const body = useRef<RapierRigidBody>(null);
@@ -65,7 +66,7 @@ export function Player() {
     // Rate limit shooting
     const activePowerUps = useGameStore.getState().activePowerUps;
     const now = Date.now();
-    const fireRate = activePowerUps.rapidfire > now ? 50 : 200;
+    const fireRate = getFireRate(activePowerUps.rapidfire, now);
     
     if (now - lastShootTime.current < fireRate) return;
     lastShootTime.current = now;
@@ -78,7 +79,7 @@ export function Player() {
     // Start raycast slightly ahead of the camera to avoid hitting the player's own collider
     const rayStart = camera.position.clone().add(raycaster.ray.direction.clone().multiplyScalar(0.8));
     const ray = new rapier.Ray(rayStart, raycaster.ray.direction);
-    const hit = world.castRay(ray, MAX_LASER_DIST, true, undefined, undefined, undefined, body.current || undefined);
+    const hit = world.castRay(ray, MAX_LASER_DISTANCE, true, undefined, undefined, undefined, body.current || undefined);
 
     const startPosVec = new THREE.Vector3();
     if (gunBarrelRef.current) {
@@ -126,9 +127,9 @@ export function Player() {
       soundManager.playHit(endPos, [camera.position.x, camera.position.y, camera.position.z]);
     } else {
       endPos = [
-        camera.position.x + raycaster.ray.direction.x * MAX_LASER_DIST,
-        camera.position.y + raycaster.ray.direction.y * MAX_LASER_DIST,
-        camera.position.z + raycaster.ray.direction.z * MAX_LASER_DIST
+        camera.position.x + raycaster.ray.direction.x * MAX_LASER_DISTANCE,
+        camera.position.y + raycaster.ray.direction.y * MAX_LASER_DISTANCE,
+        camera.position.z + raycaster.ray.direction.z * MAX_LASER_DISTANCE
       ];
       useGameStore.getState().missShot();
     }
@@ -156,7 +157,7 @@ export function Player() {
       const isMouseDown = !isMobile && document.pointerLockElement !== null && useGameStore.getState().isMouseDown;
       if (mobileInput.shooting || isMouseDown) shoot();
 
-      const currentSpeed = activePowerUps.speed > now ? SPEED * 1.8 : SPEED;
+      const currentSpeed = activePowerUps.speed > now ? PLAYER_BASE_SPEED * 1.8 : PLAYER_BASE_SPEED;
       const velocity = body.current.linvel();
       
       // Ground check
@@ -197,10 +198,7 @@ export function Player() {
       const { dashCooldown, performDash } = useGameStore.getState();
       if (k.dash && dashCooldown === 0 && (k.forward || k.backward || k.left || k.right)) {
         const dashDir = new THREE.Vector3();
-        const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(currentCamera.quaternion);
-        forward.y = 0;
-        forward.normalize();
-        const right = new THREE.Vector3().crossVectors(forward, new THREE.Vector3(0, 1, 0)).normalize();
+        const { forward, right } = getPlanarBasis(currentCamera.quaternion);
 
         if (k.forward) dashDir.add(forward);
         if (k.backward) dashDir.add(forward.clone().negate());
@@ -217,16 +215,9 @@ export function Player() {
       }
 
       // Horizontal Movement
-      const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(currentCamera.quaternion);
-      forward.y = 0;
-      forward.normalize();
-      const right = new THREE.Vector3().crossVectors(forward, new THREE.Vector3(0, 1, 0)).normalize();
+      const { forward, right } = getPlanarBasis(currentCamera.quaternion);
       
-      const joyMoveZ = -mobileInput.move.y;
-      const joyMoveX = mobileInput.move.x;
-
-      const combinedMoveX = (k.right ? 1 : 0) - (k.left ? 1 : 0) + joyMoveX;
-      const combinedMoveZ = (k.forward ? 1 : 0) - (k.backward ? 1 : 0) + joyMoveZ;
+      const { moveX: combinedMoveX, moveZ: combinedMoveZ } = getMoveAxes(k, mobileInput.move);
 
       const isSprinting = k.sprint && combinedMoveZ > 0 && !isCrouching.current && isGrounded.current;
 
@@ -286,7 +277,7 @@ export function Player() {
     
     // Apply recoil and clamp
     const newRotX = currentCamera.rotation.x + recoilOffset.current.y;
-    currentCamera.rotation.x = Math.max(-1.5, Math.min(1.5, newRotX));
+    currentCamera.rotation.x = clampPitch(newRotX);
     currentCamera.rotation.y += recoilOffset.current.x;
     
     // Reset rotation.y jitter
@@ -333,7 +324,7 @@ export function Player() {
     const lookSpeed = sensitivity * 0.5;
     currentCamera.rotation.y -= mobileInput.look.x * lookSpeed;
     const newMobileRotX = currentCamera.rotation.x - mobileInput.look.y * lookSpeed;
-    currentCamera.rotation.x = Math.max(-1.5, Math.min(1.5, newMobileRotX));
+    currentCamera.rotation.x = clampPitch(newMobileRotX);
   }
 
     // Gun Visual recoil handling
