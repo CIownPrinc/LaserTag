@@ -118,7 +118,7 @@ interface GameStore {
   hitPlayer: (direction?: number) => void;
   hitEnemy: (id: string, byPlayer?: boolean) => void;
   collectPowerUp: (id: string) => void;
-  addLaser: (start: [number, number, number], end: [number, number, number], color: string) => void;
+  addLaser: (start: [number, number, number], end: [number, number, number], color: string, applyHeat?: boolean) => void;
   addAssistantMessage: (text: string) => void;
   addParticles: (position: [number, number, number], color: string) => void;
   addEvent: (message: string) => void;
@@ -551,14 +551,14 @@ export const useGameStore = create<GameStore>((set, get) => ({
       get().addAssistantMessage(`${powerUp.type.toUpperCase()} ENHANCEMENT ACQUIRED`);
     }
   },
-  addLaser: (start, end, color) => {
+  addLaser: (start, end, color, applyHeat = true) => {
     get().socket?.emit('shoot', { start, end, color });
     set(state => {
-      const newHeat = state.isOverheated ? state.weaponHeat : Math.min(100, state.weaponHeat + 10);
+      const newHeat = applyHeat ? (state.isOverheated ? state.weaponHeat : Math.min(100, state.weaponHeat + 10)) : state.weaponHeat;
       const wasOverheated = state.isOverheated;
-      const isOverheatedNow = newHeat >= 100;
-      
-      if (!wasOverheated && isOverheatedNow) {
+      const isOverheatedNow = applyHeat ? newHeat >= 100 : state.isOverheated;
+
+      if (applyHeat && !wasOverheated && isOverheatedNow) {
         setTimeout(() => get().addAssistantMessage("NEURAL OVERHEAT: RECOIL DAMPENING ACTIVE"), 0);
       }
 
@@ -586,7 +586,11 @@ export const useGameStore = create<GameStore>((set, get) => ({
   updateEnemies: (time) => set(state => {
     const enemies = state.enemies.map(e => (e.state === 'disabled' && time > e.disabledUntil) ? { ...e, state: 'active' as EntityState } : e);
     const playerReady = state.playerState === 'disabled' && time > state.playerDisabledUntil;
-    return { enemies, playerState: playerReady ? 'active' : state.playerState };
+    return {
+      enemies,
+      playerState: playerReady ? 'active' : state.playerState,
+      health: playerReady ? 100 : state.health
+    };
   }),
   cleanupEffects: (time) => set(state => ({
     lasers: state.lasers.filter(l => time - l.timestamp < 300),

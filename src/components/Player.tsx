@@ -185,7 +185,7 @@ export function Player() {
 
       // Sprinting
       const sprintPressed = k.sprint && k.forward && !isCrouching.current && isGrounded.current;
-      setSprinting(sprintPressed);
+      if (useGameStore.getState().isSprinting !== sprintPressed) setSprinting(sprintPressed);
 
       if ((k.jump || mobileInput.jump) && isGrounded.current) {
         body.current.applyImpulse({ x: 0, y: 8.5, z: 0 }, true);
@@ -344,7 +344,8 @@ export function Player() {
         shoot();
       }
     };
-    const handleMouseUp = () => {
+    const handleMouseUp = (e: MouseEvent) => {
+      if (e.button !== 0) return;
       useGameStore.setState({ isMouseDown: false });
     };
 
